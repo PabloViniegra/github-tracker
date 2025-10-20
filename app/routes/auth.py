@@ -126,7 +126,8 @@ async def github_login(request: Request) -> Dict[str, str]:
         )
 
         # Get GitHub authorization URL
-        auth_url = GitHubService.get_authorization_url(state)
+        github_service = GitHubService()
+        auth_url = github_service.get_authorization_url(state)
 
         logger.info(f"Generated OAuth login URL with state: {state[:8]}...")
 
@@ -207,7 +208,8 @@ async def github_callback(
 
         # Exchange code for GitHub access token
         logger.info("Exchanging authorization code for GitHub token")
-        token_response = await GitHubService.exchange_code_for_token(code)
+        github_service = GitHubService()
+        token_response = await github_service.exchange_code_for_token(code)
 
         if "access_token" not in token_response:
             logger.error("GitHub token exchange did not return access_token")
@@ -220,7 +222,7 @@ async def github_callback(
 
         # Get user information from GitHub
         logger.info("Fetching user information from GitHub")
-        github_user = await GitHubService.get_user_info(github_token)
+        github_user = await github_service.get_user_info(github_token)
 
         # Calculate GitHub token expiration if provided
         github_token_expires: Optional[datetime] = None

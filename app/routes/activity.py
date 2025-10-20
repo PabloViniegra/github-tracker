@@ -7,7 +7,7 @@ This module provides endpoints to fetch:
 """
 
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
@@ -25,6 +25,64 @@ logger = logging.getLogger(__name__)
 activity_router = APIRouter(prefix="/activity", tags=["Activity"])
 
 
+def filter_repositories(
+    repositories: List[Dict[str, Any]],
+    query: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """
+    Filter repositories based on a search query.
+
+    Performs case-insensitive partial matching across multiple fields:
+    - Repository name
+    - Repository description
+    - Repository topics/tags
+    - Repository language
+    - Repository owner login
+
+    Args:
+        repositories: List of repository dictionaries from GitHub API
+        query: Optional search string (None or empty string returns all repos)
+
+    Returns:
+        Filtered list of repositories matching the query
+
+    Example:
+        >>> repos = [{"name": "FastAPI-Project", "language": "Python"}]
+        >>> filter_repositories(repos, "fastapi")
+        [{"name": "FastAPI-Project", "language": "Python"}]
+    """
+    # If no query provided, return all repositories
+    if not query or not query.strip():
+        return repositories
+
+    # Normalize query to lowercase for case-insensitive search
+    search_term = query.strip().lower()
+    filtered_repos = []
+
+    for repo in repositories:
+        # Extract searchable fields with None-safe handling
+        name = (repo.get("name") or "").lower()
+        description = (repo.get("description") or "").lower()
+        language = (repo.get("language") or "").lower()
+        owner_login = (repo.get("owner", {}).get("login") or "").lower()
+
+        # Topics are a list, join them into a searchable string
+        topics = repo.get("topics", []) or []
+        topics_str = " ".join(str(topic).lower() for topic in topics)
+
+        # Check if search term appears in any field
+        if (
+            search_term in name
+            or search_term in description
+            or search_term in language
+            or search_term in owner_login
+            or search_term in topics_str
+        ):
+            filtered_repos.append(repo)
+
+    return filtered_repos
+
+
 @activity_router.get(
     "/repositories",
     response_model=RepositoriesResponse,
@@ -34,20 +92,29 @@ activity_router = APIRouter(prefix="/activity", tags=["Activity"])
 @limiter.limit(get_settings().rate_limit_activity)
 async def get_user_repositories(
     request: Request,
+    q: Optional[str] = None,
     current_user: UserInDB = Depends(get_current_user)
 ) -> RepositoriesResponse:
     """
-    Retrieve all repositories accessible to the authenticated user.
+    Retrieve all repositories accessible to the authenticated user with optional search.
 
     This endpoint fetches repositories from GitHub using the user's
     access token. It includes both owned and accessible repositories.
 
+    The optional 'q' parameter enables full-text search across:
+    - Repository name
+    - Repository description
+    - Repository topics/tags
+    - Repository language
+    - Repository owner
+
     Args:
         request: FastAPI request object (required for rate limiting)
+        q: Optional search query for filtering repositories (case-insensitive)
         current_user: Authenticated user from dependency
 
     Returns:
-        RepositoriesResponse containing list of repositories
+        RepositoriesResponse containing list of repositories (filtered if q provided)
 
     Raises:
         HTTPException:
@@ -57,12 +124,26 @@ async def get_user_repositories(
 
     Example:
         ```python
+        # Get all repositories
         headers = {"Authorization": f"Bearer {access_token}"}
         response = await client.get("/api/v1/activity/repositories", headers=headers)
+
+        # Search for Python repositories
+        response = await client.get(
+            "/api/v1/activity/repositories?q=python",
+            headers=headers
+        )
         ```
     """
     try:
-        logger.info(f"Fetching repositories for user: {current_user.username}")
+        # Log the request with search query if provided
+        if q:
+            logger.info(
+                f"Fetching repositories for user: {current_user.username} "
+                f"with search query: '{q}'"
+            )
+        else:
+            logger.info(f"Fetching repositories for user: {current_user.username}")
 
         # Verify user has a valid GitHub token
         if not current_user.github_access_token:
@@ -73,11 +154,19 @@ async def get_user_repositories(
             )
 
         # Fetch repositories from GitHub
-        repos = await GitHubService.get_user_repos(current_user.github_access_token)
+        github_service = GitHubService()
+        repos = await github_service.get_user_repos(current_user.github_access_token)
 
         logger.info(
             f"Retrieved {len(repos)} repositories for user: {current_user.username}"
         )
+
+        # Apply search filter if query provided
+        if q:
+            repos = filter_repositories(repos, q)
+            logger.info(
+                f"Filtered to {len(repos)} repositories matching query: '{q}'"
+            )
 
         return RepositoriesResponse(repositories=repos)
 
@@ -162,7 +251,8 @@ async def get_user_activity(
             )
 
         # Fetch activity events from GitHub
-        events = await GitHubService.get_user_activity(
+        github_service = GitHubService()
+        events = await github_service.get_user_activity(
             current_user.github_access_token,
             current_user.username
         )

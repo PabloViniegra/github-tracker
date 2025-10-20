@@ -299,7 +299,8 @@ class UserService:
                     return False
 
             # Verify token validity with GitHub
-            is_valid = await GitHubService.verify_token_validity(user.github_access_token)
+            github_service = GitHubService()
+            is_valid = await github_service.verify_token_validity(user.github_access_token)
 
             if is_valid:
                 logger.debug(f"Token valid for user: {user.username}")

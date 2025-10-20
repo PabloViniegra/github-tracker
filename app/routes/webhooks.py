@@ -211,7 +211,8 @@ async def setup_webhook(
         )
 
         # Create webhook on GitHub
-        webhook = await GitHubService.create_webhook(
+        github_service = GitHubService()
+        webhook = await github_service.create_webhook(
             current_user.github_access_token,
             owner,
             repo
@@ -316,7 +317,8 @@ async def list_webhooks(
             f"Listing webhooks for {owner}/{repo} by user {current_user.username}"
         )
 
-        webhooks = await GitHubService.list_webhooks(
+        github_service = GitHubService()
+        webhooks = await github_service.list_webhooks(
             current_user.github_access_token,
             owner,
             repo
@@ -403,7 +405,8 @@ async def remove_webhook(
             f"by user {current_user.username}"
         )
 
-        success = await GitHubService.delete_webhook(
+        github_service = GitHubService()
+        success = await github_service.delete_webhook(
             current_user.github_access_token,
             owner,
             repo,
