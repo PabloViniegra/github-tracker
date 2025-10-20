@@ -27,14 +27,16 @@ class UserService:
     management and webhook configuration status.
     """
 
-    def __init__(self, db: AsyncIOMotorDatabase) -> None:
+    def __init__(self, db: AsyncIOMotorDatabase, github_service: Optional[GitHubService] = None) -> None:
         """
         Initialize the UserService.
 
         Args:
             db: AsyncIO Motor database instance
+            github_service: Optional GitHubService instance for token verification
         """
         self.collection = db["users"]
+        self._github_service = github_service
         logger.info("UserService initialized")
 
     async def create_or_update_user(
@@ -299,15 +301,21 @@ class UserService:
                     return False
 
             # Verify token validity with GitHub
-            github_service = GitHubService()
-            is_valid = await github_service.verify_token_validity(user.github_access_token)
+            # Create temporary service if not injected
+            github_service = self._github_service or GitHubService()
+            try:
+                is_valid = await github_service.verify_token_validity(user.github_access_token)
 
-            if is_valid:
-                logger.debug(f"Token valid for user: {user.username}")
-            else:
-                logger.warning(f"Token invalid for user: {user.username}")
+                if is_valid:
+                    logger.debug(f"Token valid for user: {user.username}")
+                else:
+                    logger.warning(f"Token invalid for user: {user.username}")
 
-            return is_valid
+                return is_valid
+            finally:
+                # Clean up if we created a temporary service
+                if self._github_service is None:
+                    await github_service.close()
 
         except ValueError:
             raise

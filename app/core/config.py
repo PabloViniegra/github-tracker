@@ -30,6 +30,12 @@ class Settings(BaseSettings):
     # MongoDB
     mongodb_url: str
     mongodb_db_name: str
+    mongodb_max_pool_size: int = 50
+    mongodb_min_pool_size: int = 10
+
+    # Redis
+    redis_url: str = "redis://localhost:6379/0"
+    redis_max_connections: int = 50
 
     # GitHub OAuth
     github_client_id: str

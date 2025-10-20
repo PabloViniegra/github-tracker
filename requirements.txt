@@ -5,6 +5,7 @@ python-multipart==0.0.6
 
 # Database
 motor==3.7.1
+redis[hiredis]>=5.0.0
 
 # Data Validation
 pydantic==2.5.3

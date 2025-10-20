@@ -6,7 +6,7 @@ route handlers to enforce authentication and other common requirements.
 """
 
 import logging
-from typing import Optional
+from typing import AsyncGenerator, Optional
 
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials
@@ -14,6 +14,7 @@ from fastapi.security import HTTPAuthorizationCredentials
 from app.core.database import get_database
 from app.core.security import security, verify_token
 from app.models.user import UserInDB
+from app.services.github import GitHubService
 from app.services.user import UserService
 
 # Configure logging
@@ -158,3 +159,31 @@ async def get_optional_user(
     except Exception as e:
         logger.debug(f"Optional auth failed: {str(e)}")
         return None
+
+
+async def get_github_service() -> AsyncGenerator[GitHubService, None]:
+    """
+    Dependency for GitHub service with proper lifecycle management.
+
+    This dependency creates a new GitHubService instance for each request
+    and ensures proper cleanup of HTTP connections after the request completes.
+
+    Yields:
+        GitHubService: Configured GitHub service instance
+
+    Example:
+        ```python
+        @router.get("/repos")
+        async def get_repos(
+            github_service: GitHubService = Depends(get_github_service),
+            current_user: UserInDB = Depends(get_current_user)
+        ):
+            repos = await github_service.get_user_repos(current_user.github_access_token)
+            return {"repositories": repos}
+        ```
+    """
+    service = GitHubService()
+    try:
+        yield service
+    finally:
+        await service.close()

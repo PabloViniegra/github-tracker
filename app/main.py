@@ -15,9 +15,9 @@ from slowapi import _rate_limit_exceeded_handler
 
 from app.core.config import get_settings, logger
 from app.core.database import close_mongo_connection, connect_to_mongo, db
-from app.middleware import RateLimitHeadersMiddleware, limiter
+from app.core.state_manager import cleanup_state_manager, get_state_manager
+from app.middleware import RateLimitHeadersMiddleware, SecurityHeadersMiddleware, limiter
 from app.routes import activity_router, auth_router, webhook_router
-from app.services.github import cleanup_github_service
 
 settings = get_settings()
 
@@ -35,6 +35,14 @@ async def lifespan(app: FastAPI):
     try:
         # Connect to MongoDB
         await connect_to_mongo()
+
+        # Initialize Redis connection for OAuth state management
+        state_manager = get_state_manager()
+        redis_healthy = await state_manager.health_check()
+        if redis_healthy:
+            logger.info("Redis connection established for OAuth state management")
+        else:
+            logger.warning("Redis connection failed - OAuth state management may not work")
 
         # Create database indexes
         mongodb = db.client[settings.mongodb_db_name]
@@ -68,7 +76,7 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down GitHub Activity Tracker API...")
 
     try:
-        await cleanup_github_service()
+        await cleanup_state_manager()
         await close_mongo_connection()
         logger.info("Application shutdown complete")
     except Exception as e:
@@ -86,6 +94,9 @@ app = FastAPI(
     openapi_url=f"{settings.api_v1_prefix}/openapi.json",
 )
 
+# Security Headers Middleware (first to ensure headers on all responses)
+app.add_middleware(SecurityHeadersMiddleware)
+
 # CORS Middleware
 app.add_middleware(
     CORSMiddleware,
@@ -97,6 +108,7 @@ app.add_middleware(
         "X-RateLimit-Limit",
         "X-RateLimit-Remaining",
         "X-RateLimit-Reset",
+        "X-Request-ID",
     ],
 )
 
@@ -147,23 +159,40 @@ async def health_check() -> dict:
     Health check endpoint.
 
     Returns:
-        dict: Application health status
+        dict: Application health status including database and Redis
     """
+    # Check database connection
     try:
-        # Check database connection
         if db.client:
             await db.client.admin.command("ping")
             db_status = "healthy"
         else:
             db_status = "disconnected"
     except Exception as e:
-        logger.error(f"Health check failed: {str(e)}")
+        logger.error(f"Database health check failed: {str(e)}")
         db_status = "unhealthy"
 
+    # Check Redis connection
+    try:
+        state_manager = get_state_manager()
+        redis_healthy = await state_manager.health_check()
+        redis_status = "healthy" if redis_healthy else "unhealthy"
+    except Exception as e:
+        logger.error(f"Redis health check failed: {str(e)}")
+        redis_status = "unhealthy"
+
+    # Overall status is healthy only if both are healthy
+    overall_status = (
+        "healthy"
+        if db_status == "healthy" and redis_status == "healthy"
+        else "degraded"
+    )
+
     return {
-        "status": "healthy" if db_status == "healthy" else "degraded",
+        "status": overall_status,
         "version": settings.app_version,
         "database": db_status,
+        "redis": redis_status,
     }
 
 

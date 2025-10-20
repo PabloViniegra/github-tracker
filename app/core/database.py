@@ -27,13 +27,22 @@ async def get_database() -> AsyncIOMotorDatabase:
 
 
 async def connect_to_mongo() -> None:
-    """Connect to MongoDB."""
+    """Connect to MongoDB with connection pooling."""
     try:
         settings = get_settings()
-        db.client = AsyncIOMotorClient(settings.mongodb_url)
+        db.client = AsyncIOMotorClient(
+            settings.mongodb_url,
+            maxPoolSize=settings.mongodb_max_pool_size,
+            minPoolSize=settings.mongodb_min_pool_size,
+            maxIdleTimeMS=45000,
+            serverSelectionTimeoutMS=5000,
+        )
         # Verify connection
         await db.client.admin.command("ping")
-        logger.info("Successfully connected to MongoDB")
+        logger.info(
+            f"Successfully connected to MongoDB with pool size "
+            f"{settings.mongodb_min_pool_size}-{settings.mongodb_max_pool_size}"
+        )
     except Exception as e:
         logger.error(f"Failed to connect to MongoDB: {str(e)}")
         raise

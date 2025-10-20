@@ -326,23 +326,25 @@ class TestGetUserRepositoriesEndpoint:
         sample_github_repos
     ):
         """Test successful retrieval of all repositories without search query."""
-        from app.routes.dependencies import get_current_user
+        from app.routes.dependencies import get_current_user, get_github_service
         from app.main import app
 
+        # Create mock GitHub service
+        mock_service = Mock()
+        mock_service.get_user_repos = AsyncMock(return_value=sample_github_repos)
+        mock_service.close = AsyncMock()
+
+        # Override dependencies
         app.dependency_overrides[get_current_user] = lambda: sample_user_in_db
+        app.dependency_overrides[get_github_service] = lambda: mock_service
 
         try:
-            with patch("app.routes.activity.GitHubService") as mock_service_class:
-                mock_service = Mock()
-                mock_service.get_user_repos = AsyncMock(return_value=sample_github_repos)
-                mock_service_class.return_value = mock_service
+            response = client.get("/api/v1/activity/repositories")
 
-                response = client.get("/api/v1/activity/repositories")
-
-                assert response.status_code == status.HTTP_200_OK
-                data = response.json()
-                assert "repositories" in data
-                assert len(data["repositories"]) == len(sample_github_repos)
+            assert response.status_code == status.HTTP_200_OK
+            data = response.json()
+            assert "repositories" in data
+            assert len(data["repositories"]) == len(sample_github_repos)
         finally:
             app.dependency_overrides.clear()
 
@@ -353,7 +355,7 @@ class TestGetUserRepositoriesEndpoint:
         sample_user_in_db
     ):
         """Test retrieval of repositories with search query parameter."""
-        from app.routes.dependencies import get_current_user
+        from app.routes.dependencies import get_current_user, get_github_service
         from app.main import app
 
         repos = [
@@ -362,20 +364,22 @@ class TestGetUserRepositoriesEndpoint:
             {"name": "react-app", "description": "Frontend", "language": "JavaScript"}
         ]
 
+        # Create mock GitHub service
+        mock_service = Mock()
+        mock_service.get_user_repos = AsyncMock(return_value=repos)
+        mock_service.close = AsyncMock()
+
+        # Override dependencies
         app.dependency_overrides[get_current_user] = lambda: sample_user_in_db
+        app.dependency_overrides[get_github_service] = lambda: mock_service
 
         try:
-            with patch("app.routes.activity.GitHubService") as mock_service_class:
-                mock_service = Mock()
-                mock_service.get_user_repos = AsyncMock(return_value=repos)
-                mock_service_class.return_value = mock_service
+            response = client.get("/api/v1/activity/repositories?q=fastapi")
 
-                response = client.get("/api/v1/activity/repositories?q=fastapi")
-
-                assert response.status_code == status.HTTP_200_OK
-                data = response.json()
-                assert len(data["repositories"]) == 1
-                assert data["repositories"][0]["name"] == "fastapi-app"
+            assert response.status_code == status.HTTP_200_OK
+            data = response.json()
+            assert len(data["repositories"]) == 1
+            assert data["repositories"][0]["name"] == "fastapi-app"
         finally:
             app.dependency_overrides.clear()
 
@@ -387,22 +391,24 @@ class TestGetUserRepositoriesEndpoint:
         sample_github_repos
     ):
         """Test search query that returns no results."""
-        from app.routes.dependencies import get_current_user
+        from app.routes.dependencies import get_current_user, get_github_service
         from app.main import app
 
+        # Create mock GitHub service
+        mock_service = Mock()
+        mock_service.get_user_repos = AsyncMock(return_value=sample_github_repos)
+        mock_service.close = AsyncMock()
+
+        # Override dependencies
         app.dependency_overrides[get_current_user] = lambda: sample_user_in_db
+        app.dependency_overrides[get_github_service] = lambda: mock_service
 
         try:
-            with patch("app.routes.activity.GitHubService") as mock_service_class:
-                mock_service = Mock()
-                mock_service.get_user_repos = AsyncMock(return_value=sample_github_repos)
-                mock_service_class.return_value = mock_service
+            response = client.get("/api/v1/activity/repositories?q=nonexistent")
 
-                response = client.get("/api/v1/activity/repositories?q=nonexistent")
-
-                assert response.status_code == status.HTTP_200_OK
-                data = response.json()
-                assert len(data["repositories"]) == 0
+            assert response.status_code == status.HTTP_200_OK
+            data = response.json()
+            assert len(data["repositories"]) == 0
         finally:
             app.dependency_overrides.clear()
 
@@ -436,21 +442,23 @@ class TestGetUserRepositoriesEndpoint:
         sample_user_in_db
     ):
         """Test handling of GitHub API errors."""
-        from app.routes.dependencies import get_current_user
+        from app.routes.dependencies import get_current_user, get_github_service
         from app.main import app
 
+        # Create mock GitHub service that raises error
+        mock_service = Mock()
+        mock_service.get_user_repos = AsyncMock(
+            side_effect=Exception("401 Unauthorized")
+        )
+        mock_service.close = AsyncMock()
+
+        # Override dependencies
         app.dependency_overrides[get_current_user] = lambda: sample_user_in_db
+        app.dependency_overrides[get_github_service] = lambda: mock_service
 
         try:
-            with patch("app.routes.activity.GitHubService") as mock_service_class:
-                mock_service = Mock()
-                mock_service.get_user_repos = AsyncMock(
-                    side_effect=Exception("401 Unauthorized")
-                )
-                mock_service_class.return_value = mock_service
+            response = client.get("/api/v1/activity/repositories")
 
-                response = client.get("/api/v1/activity/repositories")
-
-                assert response.status_code == status.HTTP_401_UNAUTHORIZED
+            assert response.status_code == status.HTTP_401_UNAUTHORIZED
         finally:
             app.dependency_overrides.clear()

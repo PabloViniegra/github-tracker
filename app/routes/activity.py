@@ -15,7 +15,7 @@ from app.core.config import get_settings
 from app.middleware.rate_limiting import limiter
 from app.models.user import UserInDB
 from app.models.activity import RepositoriesResponse, EventsResponse
-from app.routes.dependencies import get_current_user
+from app.routes.dependencies import get_current_user, get_github_service
 from app.services.github import GitHubService
 
 # Configure logging
@@ -93,7 +93,8 @@ def filter_repositories(
 async def get_user_repositories(
     request: Request,
     q: Optional[str] = None,
-    current_user: UserInDB = Depends(get_current_user)
+    current_user: UserInDB = Depends(get_current_user),
+    github_service: GitHubService = Depends(get_github_service)
 ) -> RepositoriesResponse:
     """
     Retrieve all repositories accessible to the authenticated user with optional search.
@@ -154,7 +155,6 @@ async def get_user_repositories(
             )
 
         # Fetch repositories from GitHub
-        github_service = GitHubService()
         repos = await github_service.get_user_repos(current_user.github_access_token)
 
         logger.info(
@@ -207,7 +207,8 @@ async def get_user_repositories(
 @limiter.limit(get_settings().rate_limit_activity)
 async def get_user_activity(
     request: Request,
-    current_user: UserInDB = Depends(get_current_user)
+    current_user: UserInDB = Depends(get_current_user),
+    github_service: GitHubService = Depends(get_github_service)
 ) -> EventsResponse:
     """
     Retrieve recent activity events for the authenticated user.
@@ -251,7 +252,6 @@ async def get_user_activity(
             )
 
         # Fetch activity events from GitHub
-        github_service = GitHubService()
         events = await github_service.get_user_activity(
             current_user.github_access_token,
             current_user.username

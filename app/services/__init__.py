@@ -9,8 +9,6 @@ from app.services.github import (
     GitHubAuthenticationError,
     GitHubRateLimitError,
     GitHubService,
-    cleanup_github_service,
-    get_github_service,
 )
 
 __all__ = [
@@ -18,6 +16,4 @@ __all__ = [
     "GitHubAPIError",
     "GitHubAuthenticationError",
     "GitHubRateLimitError",
-    "get_github_service",
-    "cleanup_github_service",
 ]

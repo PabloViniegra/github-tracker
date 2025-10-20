@@ -25,7 +25,7 @@ from app.models.webhook import (
     WebhookListResponse,
     NotificationsResponse,
 )
-from app.routes.dependencies import get_current_user
+from app.routes.dependencies import get_current_user, get_github_service
 from app.services.github import GitHubService
 from app.services.user import UserService
 from app.services.webhook import WebhookService
@@ -169,7 +169,8 @@ async def setup_webhook(
     owner: str,
     repo: str,
     current_user: UserInDB = Depends(get_current_user),
-    db=Depends(get_database)
+    db=Depends(get_database),
+    github_service: GitHubService = Depends(get_github_service)
 ) -> WebhookSetupResponse:
     """
     Configure a webhook on a GitHub repository.
@@ -211,7 +212,6 @@ async def setup_webhook(
         )
 
         # Create webhook on GitHub
-        github_service = GitHubService()
         webhook = await github_service.create_webhook(
             current_user.github_access_token,
             owner,
@@ -282,7 +282,8 @@ async def list_webhooks(
     request: Request,
     owner: str,
     repo: str,
-    current_user: UserInDB = Depends(get_current_user)
+    current_user: UserInDB = Depends(get_current_user),
+    github_service: GitHubService = Depends(get_github_service)
 ) -> WebhookListResponse:
     """
     List all webhooks configured on a repository.
@@ -317,7 +318,6 @@ async def list_webhooks(
             f"Listing webhooks for {owner}/{repo} by user {current_user.username}"
         )
 
-        github_service = GitHubService()
         webhooks = await github_service.list_webhooks(
             current_user.github_access_token,
             owner,
@@ -368,7 +368,8 @@ async def remove_webhook(
     owner: str,
     repo: str,
     hook_id: int,
-    current_user: UserInDB = Depends(get_current_user)
+    current_user: UserInDB = Depends(get_current_user),
+    github_service: GitHubService = Depends(get_github_service)
 ) -> Dict[str, str]:
     """
     Delete a webhook from a GitHub repository.
@@ -405,7 +406,6 @@ async def remove_webhook(
             f"by user {current_user.username}"
         )
 
-        github_service = GitHubService()
         success = await github_service.delete_webhook(
             current_user.github_access_token,
             owner,

@@ -24,11 +24,11 @@ from app.core.security import (
     security,
     verify_token,
 )
+from app.core.state_manager import get_state_manager
 from app.middleware.rate_limiting import limiter
 from app.models.user import UserInDB, UserResponse
 from app.models.token import TokenResponse
-from app.models.auth import OAuthState
-from app.routes.dependencies import get_current_user
+from app.routes.dependencies import get_current_user, get_github_service
 from app.services.github import GitHubService
 from app.services.user import UserService
 
@@ -38,51 +38,6 @@ logger = logging.getLogger(__name__)
 # Router configuration
 auth_router = APIRouter(prefix="/auth", tags=["Authentication"])
 
-# OAuth state storage with expiration tracking
-# TODO: Replace with Redis or database for production scalability
-oauth_states: Dict[str, OAuthState] = {}
-
-# OAuth state cleanup configuration
-OAUTH_STATE_EXPIRY_MINUTES = 10
-OAUTH_STATE_CLEANUP_INTERVAL = 100  # Cleanup every N requests
-
-
-def cleanup_expired_oauth_states() -> int:
-    """
-    Remove expired OAuth states from memory to prevent memory leak.
-
-    Returns:
-        int: Number of expired states removed
-    """
-    current_time = datetime.now(timezone.utc)
-    expired_states = [
-        state
-        for state, data in oauth_states.items()
-        if (current_time - data.created_at).total_seconds() > (OAUTH_STATE_EXPIRY_MINUTES * 60)
-    ]
-
-    for state in expired_states:
-        del oauth_states[state]
-
-    if expired_states:
-        logger.info(f"Cleaned up {len(expired_states)} expired OAuth states")
-
-    return len(expired_states)
-
-
-# Track requests for periodic cleanup
-_request_count = 0
-
-
-def periodic_cleanup() -> None:
-    """Perform periodic cleanup of expired OAuth states."""
-    global _request_count
-    _request_count += 1
-
-    if _request_count % OAUTH_STATE_CLEANUP_INTERVAL == 0:
-        cleanup_expired_oauth_states()
-        _request_count = 0
-
 
 @auth_router.get(
     "/github/login",
@@ -91,15 +46,20 @@ def periodic_cleanup() -> None:
     status_code=status.HTTP_200_OK,
 )
 @limiter.limit(get_settings().rate_limit_auth)
-async def github_login(request: Request) -> Dict[str, str]:
+async def github_login(
+    request: Request,
+    github_service: GitHubService = Depends(get_github_service)
+) -> Dict[str, str]:
     """
     Initiate the OAuth authentication flow with GitHub.
 
     This endpoint generates a secure state token and returns the GitHub
-    authorization URL that the client should redirect to.
+    authorization URL that the client should redirect to. The state is stored
+    in Redis with automatic expiration.
 
     Args:
         request: FastAPI request object (required for rate limiting)
+        github_service: GitHub service instance (dependency injected)
 
     Returns:
         Dict containing:
@@ -107,7 +67,9 @@ async def github_login(request: Request) -> Dict[str, str]:
             - state: Secure token to verify callback authenticity
 
     Raises:
-        HTTPException: 429 if rate limit exceeded
+        HTTPException:
+            - 429 if rate limit exceeded
+            - 500 if state storage fails
 
     Example:
         ```python
@@ -116,17 +78,21 @@ async def github_login(request: Request) -> Dict[str, str]:
         ```
     """
     try:
-        # Periodic cleanup of expired states
-        periodic_cleanup()
-
         # Generate cryptographically secure state token
         state = secrets.token_urlsafe(32)
-        oauth_states[state] = OAuthState(
-            created_at=datetime.now(timezone.utc)
-        )
+
+        # Store state in Redis
+        state_manager = get_state_manager()
+        success = await state_manager.create_state(state)
+
+        if not success:
+            logger.error("Failed to store OAuth state in Redis")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to initialize OAuth flow. Please try again."
+            )
 
         # Get GitHub authorization URL
-        github_service = GitHubService()
         auth_url = github_service.get_authorization_url(state)
 
         logger.info(f"Generated OAuth login URL with state: {state[:8]}...")
@@ -135,6 +101,9 @@ async def github_login(request: Request) -> Dict[str, str]:
             "authorization_url": auth_url,
             "state": state
         }
+
+    except HTTPException:
+        raise
 
     except Exception as e:
         logger.error(f"Error generating OAuth URL: {str(e)}", exc_info=True)
@@ -155,7 +124,8 @@ async def github_callback(
     request: Request,
     code: str = Query(..., description="OAuth authorization code from GitHub"),
     state: str = Query(..., description="State token for CSRF protection"),
-    db=Depends(get_database)
+    db=Depends(get_database),
+    github_service: GitHubService = Depends(get_github_service)
 ) -> TokenResponse:
     """
     Handle the OAuth callback from GitHub after user authorization.
@@ -183,32 +153,19 @@ async def github_callback(
             - 500 for unexpected errors
     """
     try:
-        # Validate state parameter
-        if state not in oauth_states:
+        # Verify and consume state from Redis
+        state_manager = get_state_manager()
+        state_valid = await state_manager.verify_and_consume_state(state)
+
+        if not state_valid:
             logger.warning(f"Invalid or expired OAuth state: {state[:8]}...")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid or expired state parameter. Please try logging in again."
             )
 
-        # Check if state has expired
-        state_data = oauth_states[state]
-        state_age = (datetime.now(timezone.utc) - state_data.created_at).total_seconds()
-
-        if state_age > (OAUTH_STATE_EXPIRY_MINUTES * 60):
-            del oauth_states[state]
-            logger.warning(f"Expired OAuth state used: {state[:8]}... (age: {state_age}s)")
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="State token has expired. Please try logging in again."
-            )
-
-        # Remove used state
-        del oauth_states[state]
-
         # Exchange code for GitHub access token
         logger.info("Exchanging authorization code for GitHub token")
-        github_service = GitHubService()
         token_response = await github_service.exchange_code_for_token(code)
 
         if "access_token" not in token_response:

@@ -703,26 +703,4 @@ class GitHubService:
             return False
 
 
-# Global service instance
-_github_service: Optional[GitHubService] = None
-
-
-def get_github_service() -> GitHubService:
-    """Get or create the global GitHub service instance.
-
-    Returns:
-        GitHubService: Singleton GitHub service instance
-    """
-    global _github_service
-    if _github_service is None:
-        _github_service = GitHubService()
-    return _github_service
-
-
-async def cleanup_github_service() -> None:
-    """Cleanup the global GitHub service instance."""
-    global _github_service
-    if _github_service is not None:
-        await _github_service.close()
-        _github_service = None
-        logger.info("GitHub service cleaned up")
+# Singleton removed - use dependency injection via get_github_service() in dependencies.py
